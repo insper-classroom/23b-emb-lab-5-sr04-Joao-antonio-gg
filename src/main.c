@@ -11,6 +11,17 @@
 #define BUT_PIO_PIN 11
 #define BUT_PIO_PIN_MASK (1 << BUT_PIO_PIN)
 
+/* Sensor */
+#define ECHO_PIO PIOA 
+#define ECHO_PIO_ID ID_PIOA
+#define ECHO_PIO_PIN 21
+#define ECHO_PIO_PIN_MASK (1 << ECHO_PIO_PIN)
+
+#define TRIG_PIO PIOD 
+#define TRIG_PIO_ID ID_PIOD
+#define TRIG_PIO_PIN 27
+#define TRIG_PIO_PIN_MASK (1 << TRIG_PIO_PIN)
+
 /** RTOS  */
 #define TASK_OLED_STACK_SIZE                (1024*6/sizeof(portSTACK_TYPE))
 #define TASK_OLED_STACK_PRIORITY            (tskIDLE_PRIORITY)
@@ -20,6 +31,8 @@ extern void vApplicationIdleHook(void);
 extern void vApplicationTickHook(void);
 extern void vApplicationMallocFailedHook(void);
 extern void xPortSysTickHandler(void);
+
+QueueHandle_t xQueueTempoF;
 
 /** prototypes */
 void but_callback(void);
@@ -47,7 +60,17 @@ extern void vApplicationMallocFailedHook(void) {
 /************************************************************************/
 
 void but_callback(void) {
+	if (pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK)) {
+		printf("Echo: %d\n", pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK));
+		rtt_init(RTT, 1);
+	}
+	else {
+		printf("Echo: %d\n", pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK));
+		uint32_t time = rtt_read_timer_value(RTT);
+		xQueueSendFromISR(xQueueTempoF, &time, 1000);
+	}
 }
+
 
 /************************************************************************/
 /* TASKS                                                                */
@@ -88,13 +111,34 @@ static void BUT_init(void) {
 	NVIC_EnableIRQ(BUT_PIO_ID);
 	NVIC_SetPriority(BUT_PIO_ID, 4);
 
-	/* conf botão como entrada */
+	/* conf botï¿½o como entrada */
 	pio_configure(BUT_PIO, PIO_INPUT, BUT_PIO_PIN_MASK, PIO_PULLUP | PIO_DEBOUNCE);
 	pio_set_debounce_filter(BUT_PIO, BUT_PIO_PIN_MASK, 60);
 	pio_enable_interrupt(BUT_PIO, BUT_PIO_PIN_MASK);
 	pio_handler_set(BUT_PIO, BUT_PIO_ID, BUT_PIO_PIN_MASK, PIO_IT_FALL_EDGE , but_callback);
+
 }
 
+static void Trig_init(void){
+	/*conf Trig*/
+	pio_configure(TRIG_PIO, PIO_OUTPUT_0, TRIG_PIO_PIN_MASK, PIO_DEFAULT);
+	pio_set_output(TRIG_PIO, TRIG_PIO_PIN_MASK, 0, 0, 0);	
+	
+}
+
+
+static void Echo_init(void){
+	/*conf Echo*/
+	NVIC_EnableIRQ(ECHO_PIO_ID);
+	NVIC_SetPriority(ECHO_PIO_ID, 4);
+
+	/* conf botï¿½o como entrada */
+	pio_configure(ECHO_PIO, PIO_INPUT, ECHO_PIO_PIN_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+	pio_set_debounce_filter(ECHO_PIO, ECHO_PIO_PIN_MASK, 60);
+	pio_enable_interrupt(ECHO_PIO, ECHO_PIO_PIN_MASK);
+	pio_handler_set(ECHO_PIO, ECHO_PIO_ID,ECHO_PIO_PIN_MASK, PIO_IT_FALL_EDGE , but_callback);
+	
+}
 /************************************************************************/
 /* main                                                                 */
 /************************************************************************/
@@ -116,7 +160,7 @@ int main(void) {
 	/* Start the scheduler. */
 	vTaskStartScheduler();
 
-  /* RTOS não deve chegar aqui !! */
+  /* RTOS nï¿½o deve chegar aqui !! */
 	while(1){}
 
 	/* Will only get here if there was insufficient memory to create the idle task. */
