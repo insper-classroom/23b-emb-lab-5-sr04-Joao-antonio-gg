@@ -26,6 +26,9 @@
 #define TASK_OLED_STACK_SIZE                (1024*6/sizeof(portSTACK_TYPE))
 #define TASK_OLED_STACK_PRIORITY            (tskIDLE_PRIORITY)
 
+#define TASK_SENSOR_STACK_SIZE                (1024*6/sizeof(portSTACK_TYPE))
+#define TASK_SENSOR_STACK_PRIORITY            (tskIDLE_PRIORITY)
+
 extern void vApplicationStackOverflowHook(xTaskHandle *pxTask,  signed char *pcTaskName);
 extern void vApplicationIdleHook(void);
 extern void vApplicationTickHook(void);
@@ -33,10 +36,16 @@ extern void vApplicationMallocFailedHook(void);
 extern void xPortSysTickHandler(void);
 
 QueueHandle_t xQueueTempoF;
+QueueHandle_t xQueueDist;
 
 /** prototypes */
 void but_callback(void);
 static void BUT_init(void);
+static void Echo_init(void);
+static void Trig_init(void);
+static void task_sensor(void *pvParameters);
+static void task_oled(void *pvParameters);
+volatile float distancia;
 
 /************************************************************************/
 /* RTOS application funcs                                               */
@@ -61,11 +70,11 @@ extern void vApplicationMallocFailedHook(void) {
 
 void but_callback(void) {
 	if (pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK)) {
-		printf("Echo: %d\n", pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK));
+		// printf("Echo: %d\n", pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK));
 		rtt_init(RTT, 1);
 	}
 	else {
-		printf("Echo: %d\n", pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK));
+		// printf("Echo: %d\n", pio_get(ECHO_PIO,PIO_INPUT, ECHO_PIO_PIN_MASK));
 		uint32_t time = rtt_read_timer_value(RTT);
 		xQueueSendFromISR(xQueueTempoF, &time, 1000);
 	}
@@ -78,14 +87,48 @@ void but_callback(void) {
 
 static void task_oled(void *pvParameters) {
 	gfx_mono_ssd1306_init();
-  gfx_mono_draw_string("Exemplo RTOS", 0, 0, &sysfont);
-  gfx_mono_draw_string("oii", 0, 20, &sysfont);
-
 	for (;;)  {
-    
-
+		if (xQueueReceive(xQueueDist, &distancia, 10)){
+			if (distancia >=2 && distancia <=400){
+			char dist_final[10];
+			sprintf(dist_final, "%.2f", distancia);
+			gfx_mono_draw_filled_rect(0, 0, 128, 32, GFX_PIXEL_CLR);
+			gfx_mono_draw_string("Distancia: ", 0, 0, &sysfont);
+			gfx_mono_draw_string(dist_final, 0, 10, &sysfont);
+			printf("Distancia: {%s}", dist_final);}
+			else {
+				printf("Erro");
+				gfx_mono_draw_filled_rect(0, 0, 128, 32, GFX_PIXEL_CLR);
+				gfx_mono_draw_string("Distancia: ", 0, 0, &sysfont);
+				gfx_mono_draw_string("Erro", 0, 10, &sysfont);
+			}
+		}
 	}
 }
+
+static void task_sensor(void *pvParameters) {
+	for (;;)  {
+		printf("task_sensor1\r");
+		pio_set(TRIG_PIO, TRIG_PIO_PIN_MASK);
+		delay_us(10);
+		pio_clear(TRIG_PIO, TRIG_PIO_PIN_MASK);
+		// recebe o tempo 2
+		uint32_t tempof;
+		printf("task_sensor2\r");
+		if (xQueueReceive(xQueueTempoF, &tempof, 1000)){
+			// calcula a distancia
+			float distancia = ((tempof *340*100)/32678)/2; 
+			//printar no serial
+			printf("Distancia: %.2f \n", distancia);
+			// envia a distancia para a queue da task oled
+			xQueueSend(xQueueDist, &distancia, 10);
+
+			//delay de 1s
+			vTaskDelay(1000);
+		}
+	}
+}
+
 
 /************************************************************************/
 /* funcoes                                                              */
@@ -106,6 +149,7 @@ static void configure_console(void) {
 	setbuf(stdout, NULL);
 }
 
+
 static void BUT_init(void) {
 	/* configura prioridae */
 	NVIC_EnableIRQ(BUT_PIO_ID);
@@ -121,8 +165,9 @@ static void BUT_init(void) {
 
 static void Trig_init(void){
 	/*conf Trig*/
+	pmc_enable_periph_clk(TRIG_PIO_ID);
 	pio_configure(TRIG_PIO, PIO_OUTPUT_0, TRIG_PIO_PIN_MASK, PIO_DEFAULT);
-	pio_set_output(TRIG_PIO, TRIG_PIO_PIN_MASK, 0, 0, 0);	
+	// pio_set_output(TRIG_PIO, TRIG_PIO_PIN_MASK, 0, 0, 0);	
 	
 }
 
@@ -133,8 +178,9 @@ static void Echo_init(void){
 	NVIC_SetPriority(ECHO_PIO_ID, 4);
 
 	/* conf bot�o como entrada */
-	pio_configure(ECHO_PIO, PIO_INPUT, ECHO_PIO_PIN_MASK, PIO_PULLUP | PIO_DEBOUNCE);
-	pio_set_debounce_filter(ECHO_PIO, ECHO_PIO_PIN_MASK, 60);
+	pmc_enable_periph_clk(ECHO_PIO);
+	pio_configure(ECHO_PIO, PIO_INPUT, ECHO_PIO_PIN_MASK, 0	);
+	// pio_set_debounce_filter(ECHO_PIO, ECHO_PIO_PIN_MASK, 60);
 	pio_enable_interrupt(ECHO_PIO, ECHO_PIO_PIN_MASK);
 	pio_handler_set(ECHO_PIO, ECHO_PIO_ID,ECHO_PIO_PIN_MASK, PIO_IT_FALL_EDGE , but_callback);
 	
@@ -151,12 +197,27 @@ int main(void) {
 
 	/* Initialize the console uart */
 	configure_console();
+	Trig_init();
+	Echo_init();
+
+	xQueueDist = xQueueCreate(32, sizeof(float));
+	if (xQueueDist == NULL){
+		printf("falha em criar a queue \n");
+	}
+	xQueueTempoF = xQueueCreate(32, sizeof(uint32_t));
+	if (xQueueTempoF == NULL){
+		printf("falha em criar a queue \n");
+	}
 
 	/* Create task to control oled */
 	if (xTaskCreate(task_oled, "oled", TASK_OLED_STACK_SIZE, NULL, TASK_OLED_STACK_PRIORITY, NULL) != pdPASS) {
 	  printf("Failed to create oled task\r\n");
 	}
 
+	if (xTaskCreate(task_sensor, "sensor", TASK_SENSOR_STACK_SIZE, NULL, TASK_SENSOR_STACK_PRIORITY, NULL) != pdPASS) {
+	  printf("Failed to create sensor task\r\n");
+	}
+	printf("Tasks created\r");
 	/* Start the scheduler. */
 	vTaskStartScheduler();
 
@@ -166,3 +227,4 @@ int main(void) {
 	/* Will only get here if there was insufficient memory to create the idle task. */
 	return 0;
 }
+
