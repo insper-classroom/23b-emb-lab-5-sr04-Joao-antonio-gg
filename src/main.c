@@ -26,8 +26,8 @@
 #define TASK_OLED_STACK_SIZE                (1024*6/sizeof(portSTACK_TYPE))
 #define TASK_OLED_STACK_PRIORITY            (tskIDLE_PRIORITY)
 
-#define TASK_SENSOR_STACK_SIZE                (1024*6/sizeof(portSTACK_TYPE))
-#define TASK_SENSOR_STACK_PRIORITY            (tskIDLE_PRIORITY)
+#define TASK_ECHO_STACK_SIZE                (1024*6/sizeof(portSTACK_TYPE))
+#define TASK_ECHO_STACK_PRIORITY            (tskIDLE_PRIORITY)
 
 extern void vApplicationStackOverflowHook(xTaskHandle *pxTask,  signed char *pcTaskName);
 extern void vApplicationIdleHook(void);
@@ -43,7 +43,7 @@ void but_callback(void);
 static void BUT_init(void);
 static void Echo_init(void);
 static void Trig_init(void);
-static void task_sensor(void *pvParameters);
+static void task_echo(void *pvParameters);
 static void task_oled(void *pvParameters);
 volatile float distancia;
 
@@ -106,15 +106,14 @@ static void task_oled(void *pvParameters) {
 	}
 }
 
-static void task_sensor(void *pvParameters) {
+static void task_echo(void *pvParameters) {
 	for (;;)  {
-		printf("task_sensor1\r");
+		
 		pio_set(TRIG_PIO, TRIG_PIO_PIN_MASK);
 		delay_us(10);
 		pio_clear(TRIG_PIO, TRIG_PIO_PIN_MASK);
-		// recebe o tempo 2
 		uint32_t tempof;
-		printf("task_sensor2\r");
+		
 		if (xQueueReceive(xQueueTempoF, &tempof, 1000)){
 			// calcula a distancia
 			float distancia = ((tempof *340*100)/32678)/2; 
@@ -214,7 +213,7 @@ int main(void) {
 	  printf("Failed to create oled task\r\n");
 	}
 
-	if (xTaskCreate(task_sensor, "sensor", TASK_SENSOR_STACK_SIZE, NULL, TASK_SENSOR_STACK_PRIORITY, NULL) != pdPASS) {
+	if (xTaskCreate(task_echo, "sensor", TASK_ECHO_STACK_SIZE, NULL, TASK_ECHO_STACK_PRIORITY, NULL) != pdPASS) {
 	  printf("Failed to create sensor task\r\n");
 	}
 	printf("Tasks created\r");
